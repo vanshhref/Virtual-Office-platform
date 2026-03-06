@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "build": "cd Backend && npm install && npm run build",
+    "start": "cd Backend && node dist/index.js",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:backend": "npm run dev --prefix Backend/server",
     "dev:frontend": "npm start --prefix Frontend/virtual-office"
