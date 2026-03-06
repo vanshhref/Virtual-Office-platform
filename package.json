@@ -1,0 +1,17 @@
+{
+  "name": "virtual-app-claude",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "npm run dev --prefix Backend/server",
+    "dev:frontend": "npm start --prefix Frontend/virtual-office"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "dependencies": {
+    "@daily-co/daily-js": "^0.87.0",
+    "socket.io-client": "^4.8.3"
+  }
+}

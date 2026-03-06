@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tileset version="1.10" tiledversion="1.11.2" name="Screenshot 2026-03-03 052819" tilewidth="32" tileheight="32" tilecount="861" columns="41">
+ <image source="tilesets/Screenshot 2026-03-03 052819.png" width="1318" height="679"/>
+</tileset>

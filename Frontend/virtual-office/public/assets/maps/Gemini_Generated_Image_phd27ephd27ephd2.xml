@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tileset version="1.10" tiledversion="1.11.2" name="Gemini_Generated_Image_phd27ephd27ephd2" tilewidth="32" tileheight="32" tilecount="4140" columns="90">
+ <grid orientation="orthogonal" width="11" height="16"/>
+ <image source="tilesets/Gemini_Generated_Image_phd27ephd27ephd2.png" trans="969694" width="2880" height="1472"/>
+</tileset>

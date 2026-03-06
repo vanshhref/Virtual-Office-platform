@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* Game styles */
+#game-container {
+  width: 100%;
+  height: 100%;
+  max-width: 1200px;
+  aspect-ratio: 4 / 3;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.game-wrapper {
+  position: relative;
+  background-color: #1a1a1a;
+  width: 95vw;
+  max-width: 1200px;
+  padding: 10px;
+  border-radius: 12px;
+  display: flex;
+  justify-content: center;
+}
+
+.game-container {
+  border: 3px solid #667eea;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
+}
+
+.game-container canvas {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .game-wrapper {
+    padding: 10px;
+  }
+
+  #game-container {
+    width: 100%;
+    max-width: 640px;
+    height: auto;
+  }
+
+  .game-container canvas {
+    max-width: 100%;
+    height: auto;
+  }
+}
