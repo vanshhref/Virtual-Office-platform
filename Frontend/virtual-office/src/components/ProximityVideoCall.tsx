@@ -27,11 +27,66 @@ const ProximityVideoCall: React.FC<ProximityVideoCallProps> = ({
   const callRef = useRef<DailyCall | null>(null);
   const [dailyParticipants, setDailyParticipants] = useState<{ [id: string]: DailyParticipant }>({});
   const [audioLevel, setAudioLevel] = useState(0);
+  const [isCallReady, setIsCallReady] = useState(false);
+  const localPreviewStreamRef = useRef<MediaStream | null>(null);
+  const localScreenStreamRef = useRef<MediaStream | null>(null);
+  const prevScreenShareOnRef = useRef<boolean>(screenShareOn);
 
   const videoRefs = useRef<{ [id: string]: HTMLVideoElement | null }>({});
 
+  const attachBestLocalPreview = useCallback(() => {
+    const localVideoEl = videoRefs.current['local'];
+    if (!localVideoEl) return;
+
+    if (localScreenStreamRef.current) {
+      localVideoEl.srcObject = localScreenStreamRef.current;
+      return;
+    }
+
+    if (localPreviewStreamRef.current) {
+      localVideoEl.srcObject = localPreviewStreamRef.current;
+      return;
+    }
+
+    localVideoEl.srcObject = null;
+  }, []);
+
+  const stopLocalScreenPreview = useCallback(() => {
+    if (localScreenStreamRef.current) {
+      localScreenStreamRef.current.getTracks().forEach((track) => track.stop());
+      localScreenStreamRef.current = null;
+    }
+    attachBestLocalPreview();
+  }, [attachBestLocalPreview]);
+
+  const startLocalScreenPreview = useCallback(async () => {
+    if (localScreenStreamRef.current) {
+      attachBestLocalPreview();
+      return;
+    }
+
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false
+      });
+      localScreenStreamRef.current = displayStream;
+      const videoTrack = displayStream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          stopLocalScreenPreview();
+        };
+      }
+      attachBestLocalPreview();
+    } catch (error) {
+      console.warn('Unable to start local screen preview:', error);
+      stopLocalScreenPreview();
+    }
+  }, [attachBestLocalPreview, stopLocalScreenPreview]);
+
   const handleJoinedMeeting = useCallback((event?: any) => {
     console.log('Joined meeting');
+    setIsCallReady(true);
     const co = callRef.current;
     if (co) {
       setDailyParticipants(co.participants());
@@ -108,14 +163,74 @@ const ProximityVideoCall: React.FC<ProximityVideoCallProps> = ({
         
         callRef.current = null;
         setCallObject(null);
+        setIsCallReady(false);
       }
     };
   }, [active, roomUrl, handleJoinedMeeting, handleParticipantUpdated, handleParticipantLeft, handleAudioLevel, handleError]);
 
+  // Reliable self-preview: manage a direct camera stream for local preview windows.
+  useEffect(() => {
+    let isCancelled = false;
+
+    const stopPreviewStream = () => {
+      if (localPreviewStreamRef.current) {
+        localPreviewStreamRef.current.getTracks().forEach((track) => track.stop());
+        localPreviewStreamRef.current = null;
+      }
+      const localVideoEl = videoRefs.current['local'];
+      if (localVideoEl) {
+        localVideoEl.srcObject = null;
+      }
+    };
+
+    const startPreviewStream = async () => {
+      if (!cameraOn || !active) {
+        stopPreviewStream();
+        return;
+      }
+
+      try {
+        if (!localPreviewStreamRef.current) {
+          localPreviewStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+        if (isCancelled) return;
+        attachBestLocalPreview();
+      } catch (error) {
+        console.warn('Unable to start local camera preview:', error);
+        stopPreviewStream();
+      }
+    };
+
+    startPreviewStream();
+
+    return () => {
+      isCancelled = true;
+      if (!cameraOn || !active) {
+        stopPreviewStream();
+      }
+    };
+  }, [cameraOn, active, isNearOthers, attachBestLocalPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (localPreviewStreamRef.current) {
+        localPreviewStreamRef.current.getTracks().forEach((track) => track.stop());
+        localPreviewStreamRef.current = null;
+      }
+      if (localScreenStreamRef.current) {
+        localScreenStreamRef.current.getTracks().forEach((track) => track.stop());
+        localScreenStreamRef.current = null;
+      }
+    };
+  }, []);
+
   // Handle Prop Updates for Media Controls
   useEffect(() => {
     const co = callRef.current;
-    if (co) {
+    const screenShareTurnedOn = !prevScreenShareOnRef.current && screenShareOn;
+    const screenShareTurnedOff = prevScreenShareOnRef.current && !screenShareOn;
+
+    if (co && isCallReady) {
       // Audio
       try {
         const currentAudio = co.localAudio();
@@ -133,16 +248,34 @@ const ProximityVideoCall: React.FC<ProximityVideoCallProps> = ({
         const localParticipant = co.participants().local;
         const isSharing = localParticipant?.screen;
         
-        if (screenShareOn && !isSharing) {
-          co.startScreenShare();
-        } else if (!screenShareOn && isSharing) {
-          co.stopScreenShare();
+        if (screenShareTurnedOn && !isSharing) {
+          try {
+            co.startScreenShare();
+          } catch (err: any) {
+            console.warn('Unable to start screen share yet:', err?.message || err);
+          }
+        } else if (screenShareTurnedOff && isSharing) {
+          try {
+            co.stopScreenShare();
+          } catch (err: any) {
+            console.warn('Unable to stop screen share cleanly:', err?.message || err);
+          }
         }
       } catch (e: any) {
         console.warn("Error updating media state:", e);
       }
+      prevScreenShareOnRef.current = screenShareOn;
+      return;
     }
-  }, [micOn, cameraOn, screenShareOn]);
+
+    // Fallback path: allow local screen-share preview before/without Daily join readiness.
+    if (screenShareTurnedOn) {
+      startLocalScreenPreview();
+    } else if (screenShareTurnedOff) {
+      stopLocalScreenPreview();
+    }
+    prevScreenShareOnRef.current = screenShareOn;
+  }, [micOn, cameraOn, screenShareOn, isCallReady, startLocalScreenPreview, stopLocalScreenPreview]);
 
   useEffect(() => {
     // Update video tracks whenever participants or refs change
@@ -162,7 +295,7 @@ const ProximityVideoCall: React.FC<ProximityVideoCallProps> = ({
 
   // If no one is near, show a small self-preview bubble
   if (!isNearOthers) {
-    if (!cameraOn && !micOn) return null; // Hide if all off
+    if (!cameraOn && !screenShareOn) return null;
 
     return (
       <div className="self-preview-bubble">
@@ -200,6 +333,9 @@ const ProximityVideoCall: React.FC<ProximityVideoCallProps> = ({
             overflow: hidden;
             z-index: 1000;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+          }
+          .self-preview-bubble .camera-preview {
+            transform: scaleX(-1);
           }
           .audio-meter {
             position: absolute;
@@ -340,6 +476,9 @@ const ProximityVideoCall: React.FC<ProximityVideoCallProps> = ({
           height: 100%;
           object-fit: cover;
           border-radius: 8px;
+        }
+        .video-participant.local .camera-preview {
+          transform: scaleX(-1);
         }
         .video-participant.placeholder {
           opacity: 0.6;

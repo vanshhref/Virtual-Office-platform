@@ -2,6 +2,7 @@
 
 import { io, Socket } from 'socket.io-client';
 import { PlayerData, PlayerMovementData } from '../types/Player';
+import { AvatarProfile } from '../../services/avatarCatalog';
 
 export class SocketService {
   private socket: Socket | null = null;
@@ -50,9 +51,18 @@ export class SocketService {
     return this.socket;
   }
 
-  joinRoom(roomId: string, username: string, x: number, y: number, userId?: string, avatarSprite?: string, avatarColor?: string): void {
+  joinRoom(
+    roomId: string,
+    username: string,
+    x: number,
+    y: number,
+    userId?: string,
+    avatarSprite?: string,
+    avatarColor?: string,
+    avatarProfile?: AvatarProfile
+  ): void {
     if (!this.socket) return;
-    this.socket.emit('join-room', { roomId, username, x, y, userId, avatarSprite, avatarColor });
+    this.socket.emit('join-room', { roomId, username, x, y, userId, avatarSprite, avatarColor, avatarProfile });
   }
 
   sendMovement(data: PlayerMovementData & { status?: string }): void {
@@ -78,6 +88,24 @@ export class SocketService {
 
   onJoinRoomSuccess(callback: (data: { playerId: string; roomId: string; playerCount: number }) => void): void {
     this.socket?.on('join-room-success', callback);
+  }
+
+  onMicSpeakerChanged(callback: (data: { speakerId: string; speakerUsername: string | null; isActive: boolean }) => void): void {
+    this.socket?.on('mic-speaker-changed', callback);
+  }
+
+  updateAvatar(avatarSprite: string, avatarColor: string, avatarProfile?: AvatarProfile): void {
+    if (!this.socket) return;
+    this.socket.emit('update-avatar', { avatarSprite, avatarColor, avatarProfile });
+  }
+
+  onPlayerAvatarUpdated(callback: (data: {
+    id: string;
+    avatarSprite: string;
+    avatarColor: string;
+    avatarProfile?: AvatarProfile;
+  }) => void): void {
+    this.socket?.on('player-avatar-updated', callback);
   }
 
   removeAllListeners(): void {

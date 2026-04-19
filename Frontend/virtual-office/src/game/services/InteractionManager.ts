@@ -158,6 +158,10 @@ export class InteractionManager {
       case 'whiteboard':
         console.log('📝 Opening whiteboard...');
         break;
+      case 'audio': // Matches 'mic' from map properties
+      case 'mic':
+        console.log('🎤 Toggling microphone broadcast...');
+        break;
     }
   }
 

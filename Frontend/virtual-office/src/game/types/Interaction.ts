@@ -2,7 +2,7 @@
 
 export interface InteractionZone {
   id: string;
-  type: 'meeting_room' | 'desk' | 'coffee' | 'whiteboard' | 'custom';
+  type: 'meeting_room' | 'desk' | 'coffee' | 'whiteboard' | 'audio' | 'mic' | 'custom';
   name: string;
   action: string;
   bounds: Phaser.Geom.Rectangle;

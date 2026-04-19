@@ -1,6 +1,8 @@
 // src/game/entities/Player.ts
 import { SocketService } from '../services/SocketService';
 import Phaser from 'phaser';
+import { AvatarProfile, normalizeAvatarProfile } from '../../services/avatarCatalog';
+import { LayeredAvatarRenderer } from '../avatar/layeredAvatar';
 
 export default class Player extends Phaser.Physics.Arcade.Sprite {
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -19,6 +21,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   private avatarSprite: string;
   private avatarColor: string;
+  private avatarProfile: AvatarProfile;
+  private layeredRenderer: LayeredAvatarRenderer;
   private status: 'online' | 'away' = 'online';
   private lastInputTime: number = Date.now();
   private readonly AWAY_TIMEOUT = 300000; // 5 minutes
@@ -26,11 +30,20 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   private isSitting: boolean = false;
   private interactionBubble: Phaser.GameObjects.Container | null = null;
 
-  constructor(scene: Phaser.Scene, x: number, y: number, sprite: string = 'worker-yellow', color: string = '#ffffff', username: string = 'You') {
+  constructor(
+    scene: Phaser.Scene,
+    x: number,
+    y: number,
+    sprite: string = 'worker-yellow',
+    color: string = '#ffffff',
+    username: string = 'You',
+    profile?: AvatarProfile
+  ) {
     // Create sprite with physics enabled
     super(scene, x, y, sprite, 0);
     this.avatarSprite = sprite;
     this.avatarColor = color;
+    this.avatarProfile = normalizeAvatarProfile(profile);
 
     // Add to scene
     scene.add.existing(this);
@@ -40,7 +53,10 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.setCollideWorldBounds(true);
     this.setScale(1.2); 
     this.setDepth(100); // Set high depth to be above layers
-    this.setTint(Phaser.Display.Color.HexStringToColor(color).color);
+    this.setAlpha(0);
+
+    this.layeredRenderer = new LayeredAvatarRenderer(scene, this.avatarSprite, this.avatarProfile, this.depth);
+    this.layeredRenderer.createAt(this.x, this.y);
 
     // FIX: Set a smaller hit-box (just the feet area) 
     if (this.body) {
@@ -138,6 +154,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       if (this.nameText) {
         this.nameText.setPosition(this.x, this.y - 45);
       }
+      this.syncLayeredAvatar();
       return;
     }
 
@@ -199,6 +216,12 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     if (this.nameText) {
       this.nameText.setPosition(this.x, this.y - 45);
     }
+    this.syncLayeredAvatar();
+  }
+
+  private syncLayeredAvatar(): void {
+    const currentFrame = typeof this.frame.name === 'number' ? this.frame.name : Number(this.frame.name || 0);
+    this.layeredRenderer.sync(this.x, this.y, this.depth, this.alpha, Number.isFinite(currentFrame) ? currentFrame : 0);
   }
 
   setSitting(sitting: boolean): void {
@@ -244,4 +267,22 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   getPosition() { return { x: this.x, y: this.y }; }
   getAvatarData() { return { sprite: this.avatarSprite, color: this.avatarColor }; }
+
+  applyAvatar(sprite: string, color: string, profile?: AvatarProfile): void {
+    this.avatarSprite = sprite;
+    this.avatarColor = color;
+    this.avatarProfile = normalizeAvatarProfile(profile);
+    this.setTexture(sprite, 0);
+    this.createAnimations();
+    this.layeredRenderer.destroy();
+    this.layeredRenderer = new LayeredAvatarRenderer(this.scene, this.avatarSprite, this.avatarProfile, this.depth);
+    this.layeredRenderer.createAt(this.x, this.y, 0);
+    this.safePlay(`${this.avatarSprite}-idle-${this.currentDirection}`, true);
+  }
+
+  destroy(fromScene?: boolean): void {
+    this.layeredRenderer.destroy();
+    this.nameText.destroy();
+    super.destroy(fromScene);
+  }
 }

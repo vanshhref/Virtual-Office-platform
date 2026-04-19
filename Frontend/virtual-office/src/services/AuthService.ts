@@ -1,6 +1,7 @@
 // src/services/AuthService.ts
 import axios from 'axios';
 import { jwtDecode } from 'jwt-decode';
+import { AvatarProfile } from './avatarCatalog';
 
 const API_URL = (process.env.REACT_APP_API_URL || 'http://localhost:4000') + '/auth';
 
@@ -9,6 +10,8 @@ export interface User {
   username: string;
   avatar_sprite: string;
   avatar_color: string;
+  avatar_profile?: AvatarProfile;
+  avatar_customized: number;
 }
 
 class AuthService {
@@ -27,13 +30,46 @@ class AuthService {
     return res.data;
   }
 
-  async updateAvatar(sprite: string, color: string) {
+  async updateAvatar(sprite: string, color: string, profile?: AvatarProfile) {
     if (!this.token) return;
-    await axios.post(`${API_URL}/update-avatar`, { sprite, color }, {
+    await axios.post(`${API_URL}/update-avatar`, { sprite, color, profile }, {
       headers: { Authorization: `Bearer ${this.token}` }
     });
-    this.user = { ...this.user!, avatar_sprite: sprite, avatar_color: color };
+    this.user = {
+      ...this.user!,
+      avatar_sprite: sprite,
+      avatar_color: color,
+      avatar_profile: profile || this.user?.avatar_profile,
+      avatar_customized: 1
+    };
     localStorage.setItem('user', JSON.stringify(this.user));
+  }
+
+  startOAuthLogin(provider: 'google' | 'microsoft') {
+    window.location.href = `${API_URL}/oauth/${provider}/start`;
+  }
+
+  async consumeOAuthCallback(): Promise<User | null> {
+    const params = new URLSearchParams(window.location.search);
+    const oauthStatus = params.get('oauth');
+    const token = params.get('token');
+    if (oauthStatus !== 'success' || !token) {
+      return null;
+    }
+
+    this.token = token;
+    localStorage.setItem('token', token);
+
+    const res = await axios.get(`${API_URL}/me`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const user: User = res.data.user;
+    this.user = user;
+    localStorage.setItem('user', JSON.stringify(user));
+
+    const cleanedUrl = `${window.location.origin}${window.location.pathname}`;
+    window.history.replaceState({}, document.title, cleanedUrl);
+    return user;
   }
 
   logout() {

@@ -17,6 +17,14 @@ export interface PlayerPosition {
     lastUpdate: number;      // Timestamp of last position update
     avatarSprite: string;    // Selected sprite set
     avatarColor: string;     // Color variation
+    avatarProfile?: {
+      body: string;
+      eyes: string;
+      hair: string;
+      clothes: string;
+      hat: string;
+      accessory: string;
+    };
     status: 'online' | 'away' | 'offline'; // Presence status
   }
 
@@ -36,4 +44,12 @@ export interface PlayerPosition {
     userId?: string;
     avatarSprite: string;
     avatarColor: string;
+    avatarProfile?: {
+      body: string;
+      eyes: string;
+      hair: string;
+      clothes: string;
+      hat: string;
+      accessory: string;
+    };
   }

@@ -20,6 +20,7 @@ const httpServer = createServer(app);
 const allowedOrigins = [
   process.env.CLIENT_URL,
   'http://localhost:3000',
+  'http://localhost:3001',
 ].filter(Boolean) as string[];
 
 app.use(cors({
@@ -77,7 +78,7 @@ io.on('connection', (socket: Socket) => {
 
   // EVENT: Player joins a room
   socket.on('join-room', (data: JoinRoomData) => {
-    const { roomId, username, x, y, userId, avatarSprite, avatarColor } = data;
+    const { roomId, username, x, y, userId, avatarSprite, avatarColor, avatarProfile } = data;
 
     // Create player object
     const newPlayer: Player = {
@@ -92,6 +93,7 @@ io.on('connection', (socket: Socket) => {
       lastUpdate: Date.now(),
       avatarSprite,
       avatarColor,
+      ...(avatarProfile ? { avatarProfile } : {}),
       status: 'online',
     };
 
@@ -116,6 +118,19 @@ io.on('connection', (socket: Socket) => {
       roomId,
       playerCount: existingPlayers.length + 1,
     });
+
+    // If someone is already broadcasting mic in this room, connect newcomer immediately.
+    const activeSpeakerId = roomManager.getMicSpeaker(roomId);
+    if (activeSpeakerId && activeSpeakerId !== socket.id) {
+      const activeSpeaker = roomManager.getPlayer(activeSpeakerId);
+      io.to(activeSpeakerId).emit('mic-broadcast-started', { listenerIds: [socket.id] });
+      socket.emit('incoming-mic-broadcast', { speakerId: activeSpeakerId });
+      socket.emit('mic-speaker-changed', {
+        speakerId: activeSpeakerId,
+        speakerUsername: activeSpeaker?.username || 'Unknown',
+        isActive: true
+      });
+    }
   });
 
   // EVENT: Player movement
@@ -158,12 +173,196 @@ io.on('connection', (socket: Socket) => {
         id: socket.id,
         username: player.username,
       });
+
+      // Clear mic speaker if they disconnect
+      if (roomManager.getMicSpeaker(roomId) === socket.id) {
+        roomManager.setMicSpeaker(roomId, null);
+        socket.to(roomId).emit('mic-broadcast-stopped', { speakerId: socket.id });
+      }
     }
   });
+
+  // --- WebRTC signaling for Mic Broadcast ---
+
+  socket.on('mic-broadcast-start', () => {
+    const roomId = roomManager.getPlayerRoom(socket.id);
+    if (!roomId) return;
+    
+    roomManager.setMicSpeaker(roomId, socket.id);
+    
+    // Broadcast to everyone in the same room/session (guest or registered).
+    const listeners = roomManager.getPlayersInRoom(roomId).filter((p) => p.id !== socket.id);
+    
+    // Notify speaker of all target listeners
+    socket.emit('mic-broadcast-started', {
+      listenerIds: listeners.map(p => p.id)
+    });
+
+    const speaker = roomManager.getPlayer(socket.id);
+    io.to(roomId).emit('mic-speaker-changed', {
+      speakerId: socket.id,
+      speakerUsername: speaker?.username || 'Unknown',
+      isActive: true
+    });
+
+    // Notify listeners that a broadcast is starting so they can prepare to receive
+    listeners.forEach(listener => {
+      if (listener.id !== socket.id) {
+        io.to(listener.id).emit('incoming-mic-broadcast', { speakerId: socket.id });
+      }
+    });
+  });
+
+  socket.on('mic-broadcast-stop', () => {
+    const roomId = roomManager.getPlayerRoom(socket.id);
+    if (!roomId) return;
+    
+    if (roomManager.getMicSpeaker(roomId) === socket.id) {
+      roomManager.setMicSpeaker(roomId, null);
+      // Notify everyone in the room to stop listening
+      socket.to(roomId).emit('mic-broadcast-stopped', { speakerId: socket.id });
+      io.to(roomId).emit('mic-speaker-changed', {
+        speakerId: socket.id,
+        speakerUsername: null,
+        isActive: false
+      });
+    }
+  });
+
+  // Relay WebRTC Offer
+  socket.on('webrtc-offer', (data: { targetId: string; sdp: any }) => {
+    io.to(data.targetId).emit('webrtc-offer', {
+      senderId: socket.id,
+      sdp: data.sdp
+    });
+  });
+
+  // Relay WebRTC Answer
+  socket.on('webrtc-answer', (data: { targetId: string; sdp: any }) => {
+    io.to(data.targetId).emit('webrtc-answer', {
+      senderId: socket.id,
+      sdp: data.sdp
+    });
+  });
+
+  // Relay ICE Candidate
+  socket.on('webrtc-ice-candidate', (data: { targetId: string; candidate: any }) => {
+    io.to(data.targetId).emit('webrtc-ice-candidate', {
+      senderId: socket.id,
+      candidate: data.candidate
+    });
+  });
+
+  // --- Proximity Chat and Private Video Call ---
+
+  const PROXIMITY_RADIUS = 200;
+
+  socket.on('proximity-chat', (data: { message: string }) => {
+    const roomId = roomManager.getPlayerRoom(socket.id);
+    const player = roomManager.getPlayer(socket.id);
+    if (!roomId || !player) return;
+
+    // Get nearby players
+    const nearbyPlayers = roomManager.getPlayersNear(roomId, player.x, player.y, PROXIMITY_RADIUS);
+
+    // Broadcast message to all nearby players including sender
+    nearbyPlayers.forEach(p => {
+      io.to(p.id).emit('proximity-chat-receive', {
+        senderId: player.id,
+        senderUsername: player.username,
+        message: data.message,
+        timestamp: Date.now()
+      });
+    });
+  });
+
+  socket.on('video-call-request', (data: { targetId: string }) => {
+    const player = roomManager.getPlayer(socket.id);
+    if (!player) return;
+
+    // Send request to target
+    io.to(data.targetId).emit('incoming-video-call', {
+      callerId: socket.id,
+      callerUsername: player.username
+    });
+  });
+
+  socket.on('video-call-accept', (data: { callerId: string }) => {
+    const player = roomManager.getPlayer(socket.id);
+    if (!player) return;
+
+    // Generate pseudo-random room ID for daily.co private room fallback
+    const privateRoomUrl = `https://your-domain.daily.co/proximity-${Math.random().toString(36).substring(7)}`;
+
+    // Notify caller that call was accepted
+    io.to(data.callerId).emit('call-accepted', {
+      accepterId: socket.id,
+      accepterUsername: player.username,
+      roomUrl: privateRoomUrl
+    });
+
+    // Also send the room url back to the accepter
+    socket.emit('call-accepted', {
+      accepterId: socket.id,
+      accepterUsername: player.username,
+      roomUrl: privateRoomUrl
+    });
+  });
+
+  socket.on('video-call-reject', (data: { callerId: string; reason?: string }) => {
+    const player = roomManager.getPlayer(socket.id);
+    if (!player) return;
+
+    io.to(data.callerId).emit('call-rejected', {
+      rejecterId: socket.id,
+      rejecterUsername: player.username,
+      reason: data.reason || 'declined'
+    });
+  });
+
+  socket.on('update-avatar', (data: {
+    avatarSprite: string;
+    avatarColor: string;
+    avatarProfile?: {
+      body: string;
+      eyes: string;
+      hair: string;
+      clothes: string;
+      hat: string;
+      accessory: string;
+    };
+  }) => {
+    const roomId = roomManager.getPlayerRoom(socket.id);
+    if (!roomId) return;
+
+    const updated = roomManager.updatePlayerAvatar(
+      socket.id,
+      data.avatarSprite,
+      data.avatarColor,
+      data.avatarProfile
+    );
+    if (!updated) return;
+
+    socket.to(roomId).emit('player-avatar-updated', {
+      id: socket.id,
+      avatarSprite: updated.avatarSprite,
+      avatarColor: updated.avatarColor,
+      avatarProfile: updated.avatarProfile
+    });
+  });
+
 });
 
 // Start server
 const PORT = process.env.PORT || 4000;
+httpServer.on('error', (err: any) => {
+  if (err?.code === 'EADDRINUSE') {
+    console.error(`❌ Port ${PORT} is already in use. Stop the other backend process or change PORT in .env.`);
+    return;
+  }
+  console.error('❌ HTTP server error:', err);
+});
+
 httpServer.listen(PORT, () => {
   console.log(`\n?? Server running on http://localhost:${PORT}`);
 });

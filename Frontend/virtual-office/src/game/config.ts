@@ -5,8 +5,8 @@ import MainScene from './scenes/MainScene';
 export const gameConfig: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO, // Use AUTO for best performance and compatibility
   parent: 'game-container', // HTML element ID where game will be rendered
-  width: 800,
-  height: 600,
+  width: 1366,
+  height: 768,
   backgroundColor: '#2d2d2d',
   physics: {
     default: 'arcade', // Arcade physics for simple 2D games
@@ -17,7 +17,7 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
   },
   scene: [MainScene], // Array of scenes (we'll have only one for now)
   scale: {
-    mode: Phaser.Scale.FIT, // Scale to fit parent container
+    mode: Phaser.Scale.ENVELOP, // Fill viewport and crop excess edges
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   pixelArt: true, // Prevent blurry sprites

@@ -6,12 +6,16 @@ import RemotePlayer from '../entities/RemotePlayer';
 import { SocketService } from '../services/SocketService';
 import { PlayerData } from '../types/Player';
 import { InteractionManager } from '../services/InteractionManager';
+import { WebRTCManager } from '../services/WebRTCManager';
 import { SpawnPoint } from '../types/Interaction';
 import { authService, User } from '../../services/AuthService';
 import { MAP_BASE_URL } from '../config/MapPaths';
+import { AvatarProfile, normalizeAvatarProfile } from '../../services/avatarCatalog';
+import { getAllLayerSpriteAssets } from '../avatar/layerAssetCatalog';
 
 // Callback type for proximity updates (players near each other)
 export type ProximityCallback = (participants: { id: string; username: string; distance: number }[]) => void;
+export type MicSpeakerCallback = (data: { speakerId: string; speakerUsername: string | null; isActive: boolean }) => void;
 
 export default class MainScene extends Phaser.Scene {
   private player!: Player;
@@ -20,6 +24,7 @@ export default class MainScene extends Phaser.Scene {
   private objectsLayer!: Phaser.Tilemaps.TilemapLayer;
   private beamsLayer!: Phaser.Tilemaps.TilemapLayer;
   private socketService!: SocketService;
+  private webrtcManager!: WebRTCManager;
   
   // Store remote players
   private remotePlayers: Map<string, RemotePlayer> = new Map();
@@ -30,6 +35,7 @@ export default class MainScene extends Phaser.Scene {
 
   // Optional callbacks (set by GameCanvas)
   public onProximityUpdate?: ProximityCallback;
+  public onMicSpeakerUpdate?: MicSpeakerCallback;
   
   private _onLoadingProgress?: (progress: number) => void;
   private _currentProgress: number = 0;
@@ -52,8 +58,13 @@ export default class MainScene extends Phaser.Scene {
 
   private interactionManager!: InteractionManager;
   private spawnPoints: SpawnPoint[] = [];
-  private userAvatar: { sprite: string, color: string } = { sprite: 'worker-yellow', color: '#ffffff' };
+  private userAvatar: { sprite: string, color: string, profile: AvatarProfile } = {
+    sprite: 'worker-yellow',
+    color: '#ffffff',
+    profile: normalizeAvatarProfile()
+  };
   private userId?: string;
+  private desiredMicBroadcast: boolean = false;
 
   constructor() {
     super({ key: 'MainScene' });
@@ -65,7 +76,11 @@ export default class MainScene extends Phaser.Scene {
     if (data.user) {
       this.username = data.user.username;
       this.userId = data.user.id;
-      this.userAvatar = { sprite: data.user.avatar_sprite, color: data.user.avatar_color };
+      this.userAvatar = {
+        sprite: data.user.avatar_sprite,
+        color: data.user.avatar_color,
+        profile: normalizeAvatarProfile(data.user.avatar_profile)
+      };
     }
     console.log(`MainScene init: username=${this.username}, room=${this.roomId}`);
   }
@@ -128,11 +143,17 @@ export default class MainScene extends Phaser.Scene {
 
     // Load ALL player sprites
     console.log('🏃 Queueing sprites...');
-    const sprites = ['worker-yellow', 'worker-blue', 'worker-green', 'worker-red'];
+    const sprites = ['worker-yellow', 'worker-blue', 'worker-green', 'worker-red', 'worker-blonde-hero'];
     sprites.forEach(s => {
       const spritePath = `assets/sprites/${s}.png`;
       console.log(`🏃 Queueing spritesheet: ${s} from ${spritePath}`);
       this.load.spritesheet(s, spritePath, { frameWidth: 32, frameHeight: 48 });
+    });
+
+    // Load dedicated texture keys for layered avatar parts.
+    getAllLayerSpriteAssets().forEach((asset) => {
+      if (this.textures.exists(asset.key)) return;
+      this.load.spritesheet(asset.key, asset.path, { frameWidth: 32, frameHeight: 48 });
     });
 
     // Explicitly start the loader if it hasn't started
@@ -192,7 +213,15 @@ create(): void {
   // 4. Create local player
   try {
     console.log('👤 Creating local player...');
-    this.player = new Player(this, spawnPoint.x, spawnPoint.y, this.userAvatar.sprite, this.userAvatar.color, this.username);
+    this.player = new Player(
+      this,
+      spawnPoint.x,
+      spawnPoint.y,
+      this.userAvatar.sprite,
+      this.userAvatar.color,
+      this.username,
+      this.userAvatar.profile
+    );
     console.log('✅ Local player created successfully');
   } catch (err) {
     console.error('❌ CRITICAL: Error creating player:', err);
@@ -538,6 +567,32 @@ create(): void {
         console.log('📊 Opening Microsoft PowerPoint...');
         break;
         
+      case 'audio':
+      case 'mic':
+        if (!this.webrtcManager) break;
+        
+        // Use an arbitrary property on player to track broadcast state
+        const isBroadcasting = (this.player as any).isBroadcasting;
+        
+        if (isBroadcasting) {
+          this.webrtcManager.stopBroadcasting();
+          (this.player as any).isBroadcasting = false;
+          this.player.showInteractionBubble('🔇 Stopped Broadcasting');
+          console.log('Stopped mic broadcast');
+        } else {
+          this.player.showInteractionBubble('🎤 Requesting Mic...');
+          this.webrtcManager.startBroadcasting().then(success => {
+            if (success) {
+              (this.player as any).isBroadcasting = true;
+              this.player.showInteractionBubble('🔴 Broadcasting Room');
+              console.log('Started mic broadcast');
+            } else {
+              this.player.showInteractionBubble('❌ Mic Error');
+            }
+          });
+        }
+        break;
+
       default:
         this.player.showInteractionBubble('✨ Interacting...');
         break;
@@ -548,9 +603,47 @@ create(): void {
   public connectMultiplayer(user: User, room: string): void {
     this.username = user.username;
     this.userId = user.id;
-    this.userAvatar = { sprite: user.avatar_sprite, color: user.avatar_color };
+    this.userAvatar = {
+      sprite: user.avatar_sprite,
+      color: user.avatar_color,
+      profile: normalizeAvatarProfile(user.avatar_profile)
+    };
     this.roomId = room;
     this.initializeMultiplayer();
+  }
+
+  public applyLocalAvatar(user: User): void {
+    if (!this.player || !this.socketService) return;
+    this.userAvatar = {
+      sprite: user.avatar_sprite,
+      color: user.avatar_color,
+      profile: normalizeAvatarProfile(user.avatar_profile)
+    };
+    this.player.applyAvatar(this.userAvatar.sprite, this.userAvatar.color, this.userAvatar.profile);
+    this.socketService.updateAvatar(this.userAvatar.sprite, this.userAvatar.color, this.userAvatar.profile);
+  }
+
+  public async setMicBroadcastEnabled(enabled: boolean): Promise<void> {
+    this.desiredMicBroadcast = enabled;
+    if (!this.webrtcManager || !this.player) return;
+
+    const isBroadcasting = (this.player as any).isBroadcasting;
+    if (enabled && !isBroadcasting) {
+      const success = await this.webrtcManager.startBroadcasting();
+      if (success) {
+        (this.player as any).isBroadcasting = true;
+        this.player.showInteractionBubble('🔴 Mic Live');
+      } else {
+        this.player.showInteractionBubble('❌ Mic Error');
+      }
+      return;
+    }
+
+    if (!enabled && isBroadcasting) {
+      this.webrtcManager.stopBroadcasting();
+      (this.player as any).isBroadcasting = false;
+      this.player.showInteractionBubble('🔇 Mic Off');
+    }
   }
 
   private initializeMultiplayer(): void {
@@ -559,6 +652,14 @@ create(): void {
     const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:4000';
     this.socketService.connect(apiUrl);
     this.setupSocketListeners();
+    
+    // Initialize WebRTC Manager
+    const socket = this.socketService.getSocket();
+    if (socket) {
+      this.webrtcManager = new WebRTCManager(socket);
+      // Apply toolbar-requested mic state once WebRTC is ready.
+      this.setMicBroadcastEnabled(this.desiredMicBroadcast);
+    }
 
     this.time.delayedCall(500, () => {
       this.socketService.joinRoom(
@@ -568,7 +669,8 @@ create(): void {
         this.player.y,
         this.userId,
         this.userAvatar.sprite,
-        this.userAvatar.color
+        this.userAvatar.color,
+        this.userAvatar.profile
       );
     });
   }
@@ -596,6 +698,22 @@ create(): void {
     this.socketService.onJoinRoomSuccess((data) => {
       this.updatePlayerCountUI(data.playerCount);
     });
+
+    this.socketService.onMicSpeakerChanged((data) => {
+      if (this.onMicSpeakerUpdate) {
+        this.onMicSpeakerUpdate(data);
+      }
+    });
+
+    this.socketService.onPlayerAvatarUpdated((data) => {
+      const remotePlayer = this.remotePlayers.get(data.id);
+      if (!remotePlayer) return;
+      remotePlayer.applyAvatar(
+        data.avatarSprite || 'worker-yellow',
+        data.avatarColor || '#ffffff',
+        normalizeAvatarProfile(data.avatarProfile)
+      );
+    });
   }
 
   private addRemotePlayer(playerData: any): void {
@@ -609,7 +727,8 @@ create(): void {
       playerData.username,
       playerData.id,
       playerData.avatarSprite || 'worker-yellow',
-      playerData.avatarColor || '#ffffff'
+      playerData.avatarColor || '#ffffff',
+      normalizeAvatarProfile(playerData.avatarProfile)
     );
 
     if (playerData.status === 'away') remotePlayer.setAlpha(0.5);
