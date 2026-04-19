@@ -187,12 +187,12 @@ io.on('connection', (socket: Socket) => {
   socket.on('mic-broadcast-start', () => {
     const roomId = roomManager.getPlayerRoom(socket.id);
     if (!roomId) return;
-    
+
     roomManager.setMicSpeaker(roomId, socket.id);
-    
+
     // Broadcast to everyone in the same room/session (guest or registered).
     const listeners = roomManager.getPlayersInRoom(roomId).filter((p) => p.id !== socket.id);
-    
+
     // Notify speaker of all target listeners
     socket.emit('mic-broadcast-started', {
       listenerIds: listeners.map(p => p.id)
@@ -216,7 +216,7 @@ io.on('connection', (socket: Socket) => {
   socket.on('mic-broadcast-stop', () => {
     const roomId = roomManager.getPlayerRoom(socket.id);
     if (!roomId) return;
-    
+
     if (roomManager.getMicSpeaker(roomId) === socket.id) {
       roomManager.setMicSpeaker(roomId, null);
       // Notify everyone in the room to stop listening
@@ -363,6 +363,6 @@ httpServer.on('error', (err: any) => {
   console.error('❌ HTTP server error:', err);
 });
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT as number, '0.0.0.0', () => {
   console.log(`\n?? Server running on http://localhost:${PORT}`);
 });
